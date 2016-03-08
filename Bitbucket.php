@@ -99,6 +99,8 @@ class Bitbucket {
      */
     private $status_lists;
 
+    private $cURL;
+
     /**
      * Bitbucket constructor.
      * @param $_username
@@ -120,6 +122,8 @@ class Bitbucket {
         $this->status_lists = array();
 
         $this->ignored_files = array( self::version_file );
+
+        $this->cURL = new cURL();
     }
 
     /**
@@ -127,8 +131,10 @@ class Bitbucket {
      */
     public function _init() {
 
-        $this->_init_urls()
-            ->_init_update_timestamp()
+        $this->cURL->_init_auth( $this->_username, $this->_password );
+
+        $this->_init_update_timestamp()
+            ->_init_urls()
             ->_init_changesets()
             ->_exec_lists()
             ->_update_version_file();
@@ -142,57 +148,17 @@ class Bitbucket {
      */
     private function _exec_lists() {
 
-        $status = true;
-
         /** exec daftar file yang dihapus */
         if( !empty( $this->removed_lists ) )
             foreach( $this->removed_lists as $_path => $_raw_node )
                 $this->status_lists[ $_path ] = file_exists( ABS_PATH . DS . $_path ) && unlink( ABS_PATH . DS . $_path ) ? 'removed' : 'not found';
 
-        /** multi curl handler */
-        $curl_handler = array();
-        $multi_curl_handler = curl_multi_init();
-        foreach( $this->updated_lists as $path => $node ) {
-            //echo $path . ' => ' . $node . ' => ' . ( $this->raw_url . DS . $node . DS . $path ) . '<br/>';
-            $curl_handler[ $path ] = curl_init(); curl_setopt_array( $curl_handler[ $path ], array(
-                CURLOPT_HTTPAUTH            => CURLAUTH_BASIC,
-                CURLOPT_USERPWD             => $this->_username . ':' . $this->_password,
-                CURLOPT_HTTPHEADER          => array( 'Content-Type: application/json' ),
-                CURLOPT_RETURNTRANSFER      => true,
-                CURLOPT_SSL_VERIFYPEER      => false,
-                CURLOPT_URL                 => $this->raw_url . DS . $node . DS . $path
-            ) ); curl_multi_add_handle( $multi_curl_handler, $curl_handler[ $path ] );
+        $response_content = $this->cURL->_fetch_multi( $this->updated_lists );
+
+        foreach( $response_content as $path => $content ) {
+            if( !is_dir( dirname( $path ) ) ) mkdir( dirname( $path ), 0777, true );
+            $this->status_lists[ $path ] = file_put_contents( ABS_PATH . DS . $path, $content ) ? 'updated' : 'fail to update';
         }
-
-        do {
-            $execReturnValue = curl_multi_exec( $multi_curl_handler, $runningHandles );
-        } while( $execReturnValue == CURLM_CALL_MULTI_PERFORM );
-
-        while( $runningHandles && $execReturnValue == CURLM_OK ) {
-            $numberReady = curl_multi_select( $multi_curl_handler );
-            if ($numberReady != -1) {
-                do {
-                    $execReturnValue = curl_multi_exec( $multi_curl_handler, $runningHandles );
-                } while( $execReturnValue == CURLM_CALL_MULTI_PERFORM );
-            }
-        }
-
-        $response_content = array();
-        foreach( $this->updated_lists as $path => $node ) {
-            if( curl_error( $curl_handler[ $path ] ) == '' )
-                $response_content[ $path ] = curl_multi_getcontent( $curl_handler[ $path ] );
-            else $status = false;
-
-            curl_multi_remove_handle( $multi_curl_handler, $curl_handler[ $path ] );
-            curl_close( $curl_handler[ $path ] );
-
-        }
-
-        curl_multi_close( $multi_curl_handler );
-
-        if( $status )
-            foreach( $response_content as $path => $content )
-                $this->status_lists[ $path ] = file_put_contents( ABS_PATH . DS . $path, $content ) ? 'updated' : 'fail to update';
 
         return $this;
 
@@ -205,15 +171,7 @@ class Bitbucket {
 
         $branch = $this->_branch;
 
-        $curl = curl_init(); curl_setopt_array( $curl, array(
-            CURLOPT_HTTPAUTH            => CURLAUTH_BASIC,
-            CURLOPT_USERPWD             => $this->_username . ':' . $this->_password,
-            CURLOPT_HTTPHEADER          => array( 'Content-Type: application/json' ),
-            CURLOPT_RETURNTRANSFER      => true,
-            CURLOPT_SSL_VERIFYPEER      => false,
-            CURLOPT_URL                 => $this->changesets_url
-        ) ); $changesets_response_arr = json_decode( curl_exec( $curl ), true ); curl_close( $curl );
-
+        $changesets_response_arr = $this->cURL->_fetch( $this->changesets_url, 'json' );
         $changesets_lists = $changesets_response_arr[ 'changesets' ];
         $changesets_lists = array_reverse( $changesets_lists );
         $changesets_lists = array_filter( $changesets_lists, function( $el ) use ( $branch ) {
@@ -223,10 +181,9 @@ class Bitbucket {
 
         foreach( $changesets_lists as $k => $resp ) {
 
-            /** update timestamp, digunakan sebagai pointer update selanjutnya (VERSION.md)  */
-            $k != 0 || $this->new_last_update_timestamp = $resp[ 'utctimestamp' ];
+            0 != $k || $this->new_last_update_timestamp = $resp['utctimestamp'];
 
-            if ( strtotime( $this->new_last_update_timestamp ) <= strtotime( $this->last_update_timestamp ) ) break;
+            if ( strtotime( $resp['utctimestamp'] ) <= strtotime( $this->last_update_timestamp ) ) break;
 
             foreach( $resp[ 'files' ] as $file ) {
 
@@ -242,13 +199,13 @@ class Bitbucket {
                     /** jika remove */
                     case self::type_git_remove  :
                         if( !array_key_exists( $_file, $this->removed_lists ) && !in_array( $_file, $this->ignored_files ) )
-                            $removed_lists[ $_file ] = $_raw_node;
+                            $removed_lists[ $_file ] = $this->raw_url . DS . $_raw_node . DS . $_file;
                         break;
 
                     /** added, modified */
                     default :
                         if( !array_key_exists( $_file, $this->updated_lists ) && !in_array( $_file, $this->ignored_files ) )
-                            $this->updated_lists[ $_file ] = $_raw_node;
+                            $this->updated_lists[ $_file ] = $this->raw_url . DS . $_raw_node . DS . $_file;
                         break;
 
                 }
@@ -272,7 +229,8 @@ class Bitbucket {
      * @return $this
      */
     private function _init_update_timestamp() {
-        $this->last_update_timestamp = preg_match( '/#last-update : (.*)/', file_get_contents( self::version_file ), $matches ) ? $matches[ 1 ] : date( 'Y-m-d H:i:s' );
+        $_load_from_file = preg_match( '/@last-update : (.*)/', file_get_contents( self::version_file ), $matches );
+        $this->last_update_timestamp = date( 'Y-m-d H:i:s', ( $_load_from_file ? strtotime( $matches[ 1 ] ) : time() ) );
         return $this;
     }
 
@@ -281,7 +239,7 @@ class Bitbucket {
      */
     private function _update_version_file() {
         if( !empty( $this->new_last_update_timestamp ) )
-            $this->status_lists[ self::version_file ] = file_put_contents( ABS_PATH . DS . self::version_file, '#last-update : ' . $this->new_last_update_timestamp ) ? 'updated' : 'fail to update';
+            $this->status_lists[ self::version_file ] = file_put_contents( ABS_PATH . DS . self::version_file, '@last-update : ' . date( 'c', strtotime( $this->new_last_update_timestamp ) ) ) ? 'updated' : 'fail to update';
         return $this;
     }
 

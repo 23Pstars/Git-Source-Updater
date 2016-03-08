@@ -8,6 +8,10 @@
  * Time: 6:59 AM
  */
 
+set_time_limit( 0 );
+
+require_once( 'cURL.php' );
+require_once( 'GitHub.php' );
 require_once( 'Bitbucket.php' );
 
 /** Bitbucket credentials */
@@ -16,11 +20,16 @@ $password       = 'password';
 $account_slug   = 'user';
 $repo_slug      = 'repo';
 
+
+/** /
+$github = new GitHub( $username, $password, $account_slug, $repo_slug );
+$status = $github->_init()->get_status();
+/***/
+
+
+/** /
 $bitbucket = new Bitbucket( $username, $password, $account_slug, $repo_slug );
+$status = $bitbucket->_init()->get_status();
+/***/
 
-$bitbucket
-    ->set_limit( 25 )
-    ->set_branch( 'versi-1.2.3' )
-    ->_init();
-
-// print_r( $bitbucket->get_status() );
+//print_r( $status );
