@@ -54,26 +54,34 @@ class cURL {
 
     }
 
-    function _fetch_multi( $urls = array() ) {
+    function _fetch_multi( $urls = array(), $sleep_offset = -1, $sleep_offset_time = 0 ) {
+
+        $_tmp_urls = array( $urls );
+        if( $sleep_offset > 0 )
+            for ($i = 0; $i <= floor( count( $urls ) / $sleep_offset ); $i++)
+                $changesets2[] = array_slice( $urls, $i * $sleep_offset, $sleep_offset );
 
         /** multi curl handler */
         $curl_handler = array();
         $multi_curl_handler = curl_multi_init();
-        foreach( $urls as $sha => $url ) {
-            $curl_handler[ $sha ] = curl_init(); curl_setopt_array( $curl_handler[ $sha ], $this->_get_curlopt( $url ) );
-            curl_multi_add_handle( $multi_curl_handler, $curl_handler[ $sha ] );
-        }
 
-        do {
-            $execReturnValue = curl_multi_exec( $multi_curl_handler, $runningHandles );
-        } while( $execReturnValue == CURLM_CALL_MULTI_PERFORM );
+        foreach( $_tmp_urls as $_urls ) {
+            foreach( $_urls as $sha => $url ) {
+                $curl_handler[ $sha ] = curl_init(); curl_setopt_array( $curl_handler[ $sha ], $this->_get_curlopt( $url ) );
+                curl_multi_add_handle( $multi_curl_handler, $curl_handler[ $sha ] );
+            }
 
-        while( $runningHandles && $execReturnValue == CURLM_OK ) {
-            $numberReady = curl_multi_select( $multi_curl_handler );
-            if ($numberReady != -1) {
-                do {
-                    $execReturnValue = curl_multi_exec( $multi_curl_handler, $runningHandles );
-                } while( $execReturnValue == CURLM_CALL_MULTI_PERFORM );
+            do {
+                $execReturnValue = curl_multi_exec( $multi_curl_handler, $runningHandles );
+            } while( $execReturnValue == CURLM_CALL_MULTI_PERFORM );
+
+            while( $runningHandles && $execReturnValue == CURLM_OK ) {
+                $numberReady = curl_multi_select( $multi_curl_handler );
+                if ($numberReady != -1) {
+                    do {
+                        $execReturnValue = curl_multi_exec( $multi_curl_handler, $runningHandles );
+                    } while( $execReturnValue == CURLM_CALL_MULTI_PERFORM );
+                }
             }
         }
 

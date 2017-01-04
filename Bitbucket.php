@@ -22,6 +22,14 @@ class Bitbucket {
      */
     const default_limit = 50;
     /**
+     * Offset
+     */
+    const sleep_offset = 20;
+    /**
+     *
+     */
+    const sleep_offset_time = 500;
+    /**
      *
      */
     const default_branch = 'master';
@@ -153,7 +161,7 @@ class Bitbucket {
             foreach( $this->removed_lists as $_path => $_raw_node )
                 $this->status_lists[ $_path ] = file_exists( ABS_PATH . DS . $_path ) && unlink( ABS_PATH . DS . $_path ) ? 'removed' : 'not found';
 
-        $response_content = $this->cURL->_fetch_multi( $this->updated_lists );
+        $response_content = $this->cURL->_fetch_multi( $this->updated_lists, self::sleep_offset, self::sleep_offset_time );
 
         foreach( $response_content as $path => $content ) {
             if( !is_dir( dirname( $path ) ) ) mkdir( dirname( $path ), 0777, true );
